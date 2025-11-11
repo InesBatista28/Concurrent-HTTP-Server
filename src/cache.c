@@ -1,0 +1,1 @@
+// Cache LRU de ficheiros

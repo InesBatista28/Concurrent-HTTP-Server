@@ -1,0 +1,1 @@
+// Gestão de memória partilhada 

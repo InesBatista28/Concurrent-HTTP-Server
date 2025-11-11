@@ -1,0 +1,1 @@
+// Interface memória partilhada 
