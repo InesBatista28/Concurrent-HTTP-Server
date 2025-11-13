@@ -1,0 +1,47 @@
+[13/Nov/2025:12:35:44 +0000] [INFO] Logger initialized - Log file: access.log
+[13/Nov/2025:12:35:44 +0000] [DEBUG] This is a DEBUG message - detailed information
+[13/Nov/2025:12:35:44 +0000] [INFO] This is an INFO message - general operation
+[13/Nov/2025:12:35:44 +0000] [WARNING] This is a WARNING message - potential issue
+[13/Nov/2025:12:35:44 +0000] [ERROR] This is an ERROR message - something went wrong
+127.0.0.1 - - [13/Nov/2025:12:35:44 +0000] "GET /index.html HTTP/1.1" 200 2048 "-" "Mozilla/5.0"
+192.168.1.100 - - [13/Nov/2025:12:35:44 +0000] "POST /api/data HTTP/1.1" 404 512 "http://example.com" "curl/7.68.0"
+10.0.0.5 - - [13/Nov/2025:12:35:44 +0000] "GET /images/logo.png HTTP/1.1" 200 15643 "http://localhost/" "Chrome/120.0.0.0"
+[13/Nov/2025:12:35:44 +0000] [INFO] Processing request #1 from thread 0
+[13/Nov/2025:12:35:44 +0000] [INFO] Processing request #2 from thread 1
+[13/Nov/2025:12:35:44 +0000] [INFO] Processing request #3 from thread 2
+[13/Nov/2025:12:35:44 +0000] [INFO] Processing request #4 from thread 0
+[13/Nov/2025:12:35:44 +0000] [INFO] Processing request #5 from thread 1
+[13/Nov/2025:12:35:44 +0000] [INFO] URL with spaces: /path/with              (null)paces
+[13/Nov/2025:12:35:44 +0000] [INFO] User agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36
+::1 - - [13/Nov/2025:12:35:44 +0000] "GET /api/v1/users/123 HTTP/1.1" 200 1024 "https://app.example.com" "Mobile Safari"
+[13/Nov/2025:12:35:44 +0000] [INFO] === Server Startup ===
+[13/Nov/2025:12:35:44 +0000] [INFO] Port: 9090
+[13/Nov/2025:12:35:44 +0000] [INFO] Workers: 4
+[13/Nov/2025:12:35:44 +0000] [INFO] Document Root: /custom/path
+[13/Nov/2025:12:35:44 +0000] [INFO] === Server Ready ===
+[13/Nov/2025:12:35:44 +0000] [INFO] All tests completed successfully
+[13/Nov/2025:12:35:44 +0000] [INFO] Shutting down test program
+[13/Nov/2025:12:39:23 +0000] [INFO] Logger initialized - Log file: access.log
+[13/Nov/2025:12:39:23 +0000] [DEBUG] This is a DEBUG message - detailed information
+[13/Nov/2025:12:39:23 +0000] [INFO] This is an INFO message - general operation
+[13/Nov/2025:12:39:23 +0000] [WARNING] This is a WARNING message - potential issue
+[13/Nov/2025:12:39:23 +0000] [ERROR] This is an ERROR message - something went wrong
+127.0.0.1 - - [13/Nov/2025:12:39:23 +0000] "GET /index.html HTTP/1.1" 200 2048 "-" "Mozilla/5.0"
+192.168.1.100 - - [13/Nov/2025:12:39:23 +0000] "POST /api/data HTTP/1.1" 404 512 "http://example.com" "curl/7.68.0"
+10.0.0.5 - - [13/Nov/2025:12:39:23 +0000] "GET /images/logo.png HTTP/1.1" 200 15643 "http://localhost/" "Chrome/120.0.0.0"
+[13/Nov/2025:12:39:23 +0000] [INFO] Processing request #1 from thread 0
+[13/Nov/2025:12:39:23 +0000] [INFO] Processing request #2 from thread 1
+[13/Nov/2025:12:39:24 +0000] [INFO] Processing request #3 from thread 2
+[13/Nov/2025:12:39:24 +0000] [INFO] Processing request #4 from thread 0
+[13/Nov/2025:12:39:24 +0000] [INFO] Processing request #5 from thread 1
+[13/Nov/2025:12:39:24 +0000] [INFO] URL with spaces: /path/with              (null)paces
+[13/Nov/2025:12:39:24 +0000] [INFO] User agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36
+::1 - - [13/Nov/2025:12:39:24 +0000] "GET /api/v1/users/123 HTTP/1.1" 200 1024 "https://app.example.com" "Mobile Safari"
+[13/Nov/2025:12:39:24 +0000] [INFO] === Server Startup ===
+[13/Nov/2025:12:39:24 +0000] [INFO] Port: 9090
+[13/Nov/2025:12:39:24 +0000] [INFO] Workers: 4
+[13/Nov/2025:12:39:24 +0000] [INFO] Document Root: /custom/path
+[13/Nov/2025:12:39:24 +0000] [INFO] === Server Ready ===
+[13/Nov/2025:12:39:24 +0000] [INFO] All tests completed successfully
+[13/Nov/2025:12:39:24 +0000] [INFO] Shutting down test program
+[13/Nov/2025:12:39:24 +0000] [INFO] Logger shutting down
