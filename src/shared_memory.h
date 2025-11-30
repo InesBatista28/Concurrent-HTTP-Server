@@ -36,7 +36,7 @@ typedef struct {
     connection_queue_t queue;   // Fila de conexões para os workers processarem
     server_stats_t stats;    // Estatísticas globais do servidor
     
-    // SEMÁFOROS PARA SINCRONIZAÇÃO - ISTO É O QUE FALTAVA!
+    // SEMÁFOROS PARA SINCRONIZAÇÃO - ZÉ ERA ISTO É O QUE FALTAVA!
     sem_t mutex;              // Semáforo para acesso exclusivo à estrutura toda
     sem_t empty_slots;        // Semáforo para slots vazios na fila (produtor espera)
     sem_t full_slots;         // Semáforo para slots preenchidos (consumidor espera)
