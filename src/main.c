@@ -1,5 +1,3 @@
-<<<<<<< Updated upstream
-=======
 // Inês Batista, 124877
 // Maria Quinteiro, 124996
 
@@ -195,4 +193,3 @@ int main(int argc, char *argv[]) {
     
     return 0;
 }
->>>>>>> Stashed changes
