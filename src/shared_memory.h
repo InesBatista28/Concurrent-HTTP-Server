@@ -1,66 +1,53 @@
 // Inês Batista, 124877
 // Maria Quinteiro, 124996
 
-#ifndef SHARED_MEM_H
-#define SHARED_MEM_H
 
-#include <semaphore.h>  // Para sem_t - semáforos para sincronização
+#ifndef SHARED_MEMORY_H
+#define SHARED_MEMORY_H
 
-// Define o tamanho máximo da fila de conexões
-// Isto é o número máximo de clientes que podem ficar em espera
-#define MAX_QUEUE_SIZE 100
+#include <semaphore.h>
+#include <unistd.h> // Necessário para size_t e tipos POSIX.
 
-// Estrutura para guardar estatísticas do servidor
-// Estas estatísticas são partilhadas entre todos os processos
+#define MAX_QUEUE_SIZE 100 // Tamanho máximo da fila de conexões.
+#define SHM_NAME "/server_shm_queue" // Nome do segmento de memória partilhada (usado no .c).
+
+// Estrutura para estatísticas do servidor (simples).
 typedef struct {
-    long total_requests;     // Conta quantos pedidos HTTP foram processados no total
-    long bytes_transferred;   // Conta quantos bytes foram enviados para clientes
-    long status_200;       // Conta quantas respostas "200 OK" foram enviadas
-    long status_404;             // Conta quantas respostas "404 Not Found" foram enviadas  
-    long status_500;          // Conta quantas respostas "500 Internal Error" foram enviadas
-    int active_connections;     // Mostra quantas ligações estão ativas AGORA mesmo
+    int total_requests; // Total de pedidos processados (200, 4xx, 5xx).
+    int status_200;     // Contagem de respostas 200 OK.
+    int status_404;     // Contagem de respostas 404 Not Found.
+    int status_500;     // Contagem de respostas 5xx (inclui 503 do Master).
 } server_stats_t;
 
-// Estrutura para a fila de conexões (produtor-consumidor)
-// O master coloca conexões aqui, os workers retiram
+// Estrutura para a fila circular de descritores de sockets.
 typedef struct {
-    int sockets[MAX_QUEUE_SIZE];  // Array que guarda os descritores de socket
-    int front;  // Índice do próximo elemento a ser retirado (consumidor)
-    int rear;         // Índice do próximo elemento a ser inserido (produtor)
-    int count;      // Número de elementos atualmente na fila
+    int sockets[MAX_QUEUE_SIZE]; // Array para guardar os FDs.
+    int head;                    // Índice da próxima conexão a consumir (dequeue).
+    int rear;                    // Índice para a próxima conexão a produzir (enqueue).
+    int count;                   // Número atual de elementos na fila.
 } connection_queue_t;
 
-// Estrutura principal que vai para a memória partilhada
-// Contém tanto a fila como as estatísticas
+// Estrutura principal da memória partilhada.
 typedef struct {
-    connection_queue_t queue;   // Fila de conexões para os workers processarem
-    server_stats_t stats;    // Estatísticas globais do servidor
-    
-    // SEMÁFOROS PARA SINCRONIZAÇÃO - ZÉ ERA ISTO É O QUE FALTAVA!
-    sem_t mutex;              // Semáforo para acesso exclusivo à estrutura toda
-    sem_t empty_slots;        // Semáforo para slots vazios na fila (produtor espera)
-    sem_t full_slots;         // Semáforo para slots preenchidos (consumidor espera)
+    sem_t mutex;            // Mutex para acesso exclusivo à fila e estatísticas.
+    sem_t empty_slots;      // Conta slots vazios (usado pelo Produtor - Master).
+    sem_t full_slots;       // Conta slots preenchidos (usado pelo Consumidor - Worker).
+    connection_queue_t queue; // A fila de conexões.
+    server_stats_t stats;     // Estatísticas globais.
 } shared_data_t;
 
+// Variável global que aponta para o segmento mapeado de memória partilhada.
+extern shared_data_t *g_shared_data;
 
-// Variável global que será o ponteiro para o início da SHM.
-extern shared_data_t *g_shared_data; // Usado por Master e Workers para aceder aos dados partilhados.
-
-
-// Função para criar a memória partilhada
-// Retorna um ponteiro para os dados partilhados ou NULL se erro
-shared_data_t* create_shared_memory();
-
-
-// Função para limpar a memória partilhada no final
-// Deve ser chamada quando o servidor termina
-void destroy_shared_memory(shared_data_t* data);
+// Funções de inicialização e limpeza.
+shared_data_t *create_shared_memory();
+void destroy_shared_memory(shared_data_t *data);
 
 
 // Adiciona um descritor de ficheiro à fila de forma segura (Produtor: Master).
-int enqueue_connection(int client_fd); // Usa os semáforos 'mutex', 'empty_slots' e 'full_slots' para sincronizar.
+int enqueue_connection(int client_fd); 
 
 // Retira um descritor de ficheiro da fila de forma segura (Consumidor: Worker).
-int dequeue_connection(void); // Usa os semáforos 'mutex', 'full_slots' e 'empty_slots' para sincronizar.
+int dequeue_connection(void); 
 
-#endif
+#endif 
