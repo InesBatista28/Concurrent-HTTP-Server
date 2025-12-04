@@ -8,7 +8,8 @@
 #include "config.h"          // Estruturas de configuração
 #include "stats.h"           // função update_stats
 #include "logger.h"          // função log_request
-#include "http.h"            // estrutura http_request_t
+#include "http.h"            // estrutura http_request_t (assumida)
+#include "thread_pool.h"     // <<< NOVO: Para a Thread Pool
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,9 +21,11 @@
 #include <fcntl.h>           // shm_open flags.
 #include <sys/stat.h>        // shm_open mode.
 
-
 // flag de controlo para terminação
 volatile sig_atomic_t worker_keep_running = 1;
+
+// Variável global para a Thread Pool interna
+thread_pool_t *g_pool = NULL;
 
 // resposta de HTTP simpes 200 OK (APENAS PARA TESTES INICIAIS)
 static const char* HTTP_200_RESPONSE =
@@ -40,18 +43,18 @@ void worker_signal_handler(int signum) {
 }
 
 // simula o processamento de um pedido (ENVIA UM 200 OK SIMPLES)
-void process_request(int client_fd) {
+// nova executada agora por uma thread da pool 
+void handle_http_request(int client_fd) {
     size_t bytes_sent = strlen(HTTP_200_RESPONSE);
     int status_code = 200;
     
-    // NOTE: Em código real, faríamos a leitura do socket aqui.
+
     // Vamos simular uma estrutura de pedido para o log.
     http_request_t mock_req = {0};
     strcpy(mock_req.method, "GET");
     strcpy(mock_req.path, "/test");
     strcpy(mock_req.version, "HTTP/1.1");
-    // NOTE: O IP remoto seria obtido durante o accept no Master,
-    // mas não temos essa informação no Worker só com o client_fd.
+    // O IP remoto não está disponível aqui, usamos mock.
     const char *mock_ip = "127.0.0.1"; 
 
 
@@ -60,36 +63,36 @@ void process_request(int client_fd) {
 
     // 2. Atualizar estatísticas (USANDO A FUNÇÃO CENTRALIZADA)
     if (g_shared_data) {
-        // Agora usamos a função que faz o sem_wait/post internamente e lida com toda a lógica.
+        // Usamos a função que faz o sem_wait/post internamente
         update_stats(&g_shared_data->stats, status_code, bytes_sent, &g_shared_data->mutex);
         
         // 3. REGISTAR O PEDIDO (LOG)
-        // Usamos o mutex da SHM para proteger a escrita do log,
-        // garantindo que não há race conditions no ficheiro de log.
         log_request(mock_ip, &mock_req, status_code, bytes_sent, &g_shared_data->mutex);
     }
     
     // 4. fechar conexão
     close(client_fd);
-    printf("[Worker %d] Processed request (socket %d). Status: %d\n", getpid(), client_fd, status_code);
+    printf("[Worker %d | Thread %lu] Processed request (socket %d). Status: %d\n", 
+           getpid(), pthread_self(), client_fd, status_code);
 }
 
 
 
 int worker_main(server_config_t* config) {
+    int exit_code = 0;
+    int worker_pid = getpid();
+    
     // 1. configurar handlers de sinal
-    // o worker deve responder ao SIGTERM enviado pelo Master
-    signal(SIGINT, SIG_IGN);  //Ignora o Ctr+C para deixar o Master tratar do shutdown inicial
-    signal(SIGTERM, worker_signal_handler); //terminação pelo Master
+    signal(SIGINT, SIG_IGN);  
+    signal(SIGTERM, worker_signal_handler); 
+    signal(SIGPIPE, SIG_IGN); // Ignora SIGPIPE, permite que o send/write retorne um erro
 
     // 2. ligar à memória partilhada (assume que o Master já a criou!!!)
-    // O SHM_NAME é uma macro definida em shared_memory.h
     int shm_fd = shm_open(SHM_NAME, O_RDWR, 0666); 
     if (shm_fd < 0) {
         perror("[Worker] shm_open failed");
         return -1;
     }
-    // Mapeamento. Assume que o Master já definiu o tamanho.
     g_shared_data = (shared_data_t *)mmap(0, sizeof(shared_data_t), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     close(shm_fd);
 
@@ -98,37 +101,60 @@ int worker_main(server_config_t* config) {
         return -1;
     }
 
-    printf("[Worker %d] Attached to shared memory. Starting work loop...\n", getpid());
+    printf("[Worker %d] Attached to shared memory.\n", worker_pid);
+
+    // 3. INICIALIZAR A THREAD POOL 
+    // Cada Worker cria M threads para lidar com os sockets que recebe.
+    g_pool = create_thread_pool(config->num_threads, handle_http_request);
+    if (g_pool == NULL) {
+        fprintf(stderr, "[Worker %d] ERRO: Falha ao criar a Thread Pool. A sair.\n", worker_pid);
+        munmap(g_shared_data, sizeof(shared_data_t));
+        return 1;
+    }
+    
+    printf("[Worker %d] Thread Pool criada com %d threads. Starting work loop...\n", worker_pid, config->num_threads);
 
 
-    // 3. loop principal do consumidor
+    // 4. loop principal do Consumidor da SHM (Produtor para a Pool)
     while (worker_keep_running) {
-        // A função dequeue_connection bloqueia o Worker se a fila estiver vazia (sem_wait full_slots).
+        // O Worker PRINCIPAL bloqueia aqui à espera de um socket do Master
         int client_fd = dequeue_connection();
 
-        // Se o worker recebeu SIGTERM enquanto estava bloqueado em sem_wait,
-        // o sem_wait retorna -1 com errno = EINTR. O dequeue_connection trata isso.
-        
         if (client_fd > 0) {
-            // Conexão recebida, processar.
-            process_request(client_fd);
+            // SUCESSO: Conexão recebida. O Worker delega à Thread Pool.
+            
+            // ESTE É O PONTO CRÍTICO DA CONCORRÊNCIA HÍBRIDA!
+            if (add_task(g_pool, client_fd) != 0) {
+                // AVISO: A fila interna da Thread Pool está cheia.
+                fprintf(stderr, "[Worker %d] AVISO: Thread Pool Task Queue cheia. Fechando socket %d.\n", worker_pid, client_fd);
+                close(client_fd);
+            }
+            
         } else if (client_fd == -1 && worker_keep_running == 0) {
-            // Se dequeue falhou (client_fd == -1) E o Master já sinalizou o fim (worker_keep_running = 0).
-            break; // Sair do loop.
+            // Saída graciosa (SIGTERM apanhou o sem_wait/dequeue)
+            break; 
         } else if (client_fd == -1 && worker_keep_running == 1) {
-             // Se dequeue falhou mas ainda está a correr (erro de semáforo).
-             fprintf(stderr, "[Worker %d] FATAL ERROR: dequeue failed but worker still running. Retrying in 1s...\n", getpid());
+             // Erro inesperado no dequeue_connection (pode ser problema de semáforo)
+             fprintf(stderr, "[Worker %d] FATAL ERROR: dequeue failed but worker still running. Retrying in 1s...\n", worker_pid);
              sleep(1);
         }
     }
 
 
-    // 4. limpeza final
+    // 5. LIMPEZA FINAL
+    printf("[Worker %d] Iniciando limpeza da Thread Pool...\n", worker_pid);
+    
+    // Destrói a pool (espera por todas as M threads)
+    if (g_pool != NULL) {
+        destroy_thread_pool(g_pool);
+        g_pool = NULL;
+    }
+    
+    // O Worker APENAS desmapeia (detach).
     if (g_shared_data != NULL) {
-        // O Worker APENAS desmapeia (detach). O Master é que desvincula (unlink).
         munmap(g_shared_data, sizeof(shared_data_t)); 
     }
     
-    printf("[Worker %d] Terminated gracefully.\n", getpid());
-    return 0;
+    printf("[Worker %d] Terminated gracefully.\n", worker_pid);
+    return exit_code;
 }

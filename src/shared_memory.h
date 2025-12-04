@@ -6,6 +6,7 @@
 #define SHARED_MEMORY_H
 
 #include <semaphore.h>
+#include <stats.h> // Necessário para server_stats_t
 #include <unistd.h> // Necessário para size_t e tipos POSIX.
 
 #define MAX_QUEUE_SIZE 100 // Tamanho máximo da fila de conexões.
@@ -16,7 +17,7 @@
 // Estrutura para a fila circular de descritores de sockets.
 typedef struct {
     int sockets[MAX_QUEUE_SIZE]; // Array para guardar os FDs.
-    int head;                    // Índice da próxima conexão a consumir (dequeue).
+    int head;                    // Índ1ice da próxima conexão a consumir (dequeue).
     int rear;                    // Índice para a próxima conexão a produzir (enqueue).
     int count;                   // Número atual de elementos na fila.
 } connection_queue_t;
@@ -26,8 +27,11 @@ typedef struct {
     sem_t mutex;            // Mutex para acesso exclusivo à fila e estatísticas.
     sem_t empty_slots;      // Conta slots vazios (usado pelo Produtor - Master).
     sem_t full_slots;       // Conta slots preenchidos (usado pelo Consumidor - Worker).
+    sem_t log_mutex;
     connection_queue_t queue; // A fila de conexões.
     server_stats_t stats;     // Estatísticas globais.
+
+    int log_fd;
 } shared_data_t;
 
 // Variável global que aponta para o segmento mapeado de memória partilhada.

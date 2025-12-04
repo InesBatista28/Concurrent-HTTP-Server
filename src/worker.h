@@ -14,7 +14,8 @@ int worker_main(server_config_t* config);
 // Handler de sinal para terminação.
 void worker_signal_handler(int signum);
 
-// Simula o processamento de um pedido e atualiza estatísticas.
-void process_request(int client_fd);
+// Função que cada thread na pool irá executar para tratar um pedido HTTP.
+// AQUI O nome foi alterado de 'process_request' para 'handle_http_request' !!
+void handle_http_request(int client_fd);
 
 #endif 
