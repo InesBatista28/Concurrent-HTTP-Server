@@ -17,6 +17,7 @@ typedef struct {
     int port;                       // Porto onde o servidor vai escutar (ex: 8080)
     char document_root[256];       // Pasta onde estão os ficheiros HTML, CSS, etc.
     int num_workers;                // Quantos processos trabalhadores vamos criar
+    int num_threads;
     int threads_per_worker;    // Quantas threads cada worker vai ter
     int max_queue_size;             // Quantas ligações podem ficar em espera
     char log_file[256];      // Onde guardar os registos do servidor
