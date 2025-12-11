@@ -1,4 +1,5 @@
-#define _GNU_SOURCE
+#define _GNU_SOURCE // I need this for some GNU extensions like usleep and random functions.
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,11 +10,13 @@
 #include <netdb.h>
 #include <time.h>
 
+// I'm defining test parameters as constants.
 #define SERVER_PORT 8080
 #define SERVER_IP "127.0.0.1"
 #define NUM_THREADS 10
 #define REQUESTS_PER_THREAD 50
 
+// This structure holds statistics for each test thread.
 typedef struct {
     int thread_id;
     int success_count;
