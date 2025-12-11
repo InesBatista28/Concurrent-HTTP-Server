@@ -7,65 +7,58 @@
 #include <sys/stat.h>        
 #include <fcntl.h>           
 
-/* Global pointers to shared memory regions */
-connection_queue_t *queue = NULL;
-server_stats_t *stats = NULL;
+// * Global pointers to shared memory regions
+// These pointers will be accessible from all processes (master and workers).
+connection_queue_t *queue = NULL; // I store client connections here.
+server_stats_t *stats = NULL;     // I keep server statistics here.
 
-/*
- * Initialize Shared Connection Queue
- * Purpose: Allocates a shared memory block to hold the connection queue structure
- * and the actual array of file descriptors. It also initializes the synchronization
- * primitives (mutexes and semaphores) required for safe concurrent access.
- *
- * Parameters:
- * - max_queue_size: The capacity of the circular buffer.
- *
- * Logic:
- * 1. Calculates total size: struct size + (int size * max elements).
- * 2. Uses mmap with MAP_SHARED | MAP_ANONYMOUS to create a shared region reachable
- * by child processes (forked after this call).
- * 3. Initializes PTHREAD_PROCESS_SHARED mutexes so they work across process boundaries.
- */
+// I need to initialize the shared connection queue.
+// This creates a circular buffer in shared memory that all processes can access.
 void init_shared_queue(int max_queue_size)
 {
-    /* Calculate memory requirements */
+    // First, I calculate how much memory I need.
+    // I need space for the queue structure PLUS space for the actual connections array.
     size_t queue_data_size = sizeof(int) * max_queue_size;
     size_t total_size = sizeof(connection_queue_t) + queue_data_size;
 
-    /* Allocate shared memory */
+    // I use mmap with MAP_ANONYMOUS to allocate shared memory that isn't backed by a file.
     void *mem_block = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
     if (mem_block == MAP_FAILED) {
         perror("mmap failed");
-        exit(1);
+        exit(1); // If I can't allocate shared memory, I can't continue.
     }
 
+    // Now I set up my queue structure.
     queue = (connection_queue_t *)mem_block;
-    /* Point the data array to the memory immediately following the struct */
+    // The connections array starts right after the queue structure in memory.
     queue->connections = (int *)(queue + 1);
 
-    /* Initialize circular buffer indices */
-    queue->head = 0;
-    queue->tail = 0;
-    queue->max_size = max_queue_size;
-    queue->shutting_down = 0;
+    // I initialize the circular buffer indices.
+    queue->head = 0;  // This is where I'll take connections from.
+    queue->tail = 0;  // This is where I'll add new connections.
+    queue->max_size = max_queue_size; // I remember my capacity.
+    queue->shutting_down = 0; // I start with the queue active.
     
-    /* Initialize Process-Shared Mutex for the Queue */
+    // Now I need to initialize a mutex that works across processes.
     pthread_mutexattr_t mutex_attr;
     pthread_mutexattr_init(&mutex_attr);
-    pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+    pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED); // This is key!
     if (pthread_mutex_init(&queue->mutex, &mutex_attr) != 0) {
         perror("mutex init");
         exit(1);
     }
     pthread_mutexattr_destroy(&mutex_attr);
 
-    /* Initialize Semaphore for Logging (Binary Semaphore / Mutex) */
+    // I also need a semaphore for logging synchronization.
     if (sem_init(&queue->log_mutex, 1, 1) != 0) {
         perror("sem init log_mutex");
         exit(1);
     }
-    /* Initialize Producer-Consumer Semaphores */
+    
+    // I set up the producer-consumer semaphores.
+    // empty_slots starts at max_size (all slots are empty).
+    // filled_slots starts at 0 (no connections yet).
     if (sem_init(&queue->empty_slots, 1, max_queue_size) != 0 ||
         sem_init(&queue->filled_slots, 1, 0) != 0) {
         perror("sem init");
@@ -73,16 +66,11 @@ void init_shared_queue(int max_queue_size)
     }
 }
 
-/*
- * Initialize Shared Statistics
- * Purpose: Allocates a shared memory block for server metrics (requests, bytes, etc.).
- *
- * Logic:
- * - Uses mmap for shared access.
- * - Initializes a process-shared semaphore (stats->mutex) to protect counter updates.
- */
+// I also need shared memory for server statistics.
+// All workers will update these stats, and the master can read them.
 void init_shared_stats()
 {
+    // I allocate shared memory for the stats structure.
     void *mem_block = mmap(NULL, sizeof(server_stats_t), 
                            PROT_READ | PROT_WRITE, 
                            MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -94,7 +82,7 @@ void init_shared_stats()
 
     stats = (server_stats_t *)mem_block;
 
-    /* Zero out all counters */
+    // I initialize all counters to zero.
     stats->total_requests = 0;
     stats->bytes_transferred = 0;
     stats->status_200 = 0;
@@ -103,83 +91,71 @@ void init_shared_stats()
     stats->active_connections = 0;
     stats->average_response_time = 0;
 
-    /* Initialize binary semaphore (value 1) for mutual exclusion */
+    // I need a semaphore to protect these stats from concurrent updates.
     if (sem_init(&stats->mutex, 1, 1) != 0) {
         perror("sem init stats");
         exit(1);
     }
 }
 
-/*
- * Enqueue Connection (Producer)
- * Purpose: Adds a client socket FD to the circular buffer.
- * * Parameters:
- * - client_socket: The file descriptor to add.
- *
- * Return:
- * - 0 on success.
- * - -1 if the queue is full (EAGAIN) or shutting down.
- *
- * Synchronization:
- * 1. Checks 'shutting_down' flag.
- * 2. Waits on 'empty_slots' (decrements available space). Uses trywait to avoid blocking if full.
- * 3. Locks mutex to update 'tail' index safely.
- * 4. Signals 'filled_slots' (increments item count).
- */
+// This function adds a client connection to the shared queue.
+// I'm the producer in the producer-consumer pattern.
 int enqueue(int client_socket) {
+    // First, I check if we're shutting down.
     if (queue->shutting_down) {
-        return -1;
+        return -1; // If we are, I reject new connections.
     }
 
-    /* Non-blocking wait for a free slot */
+    // I try to get an empty slot without blocking.
+    // If the queue is full, I return immediately.
     if (sem_trywait(&queue->empty_slots) != 0) {
         if (errno == EAGAIN) {
-            return -1; /* Queue Full */
+            return -1; // Queue is full.
         }
         perror("sem_trywait");
         return -1; 
     }
 
+    // Now I have permission to add to the queue.
     pthread_mutex_lock(&queue->mutex);
 
+    // I add the client socket to the tail position.
     queue->connections[queue->tail] = client_socket;
+    // I move the tail forward, wrapping around if needed.
     queue->tail = (queue->tail + 1) % queue->max_size;
 
     pthread_mutex_unlock(&queue->mutex);
+    
+    // I signal that there's now a new item in the queue.
     sem_post(&queue->filled_slots);
     
-    return 0; 
+    return 0; // Success!
 }
 
-/*
- * Dequeue Connection (Consumer)
- * Purpose: Removes and returns a client socket FD from the circular buffer.
- *
- * Return:
- * - Valid file descriptor on success.
- * - -1 if the queue is shutting down and empty.
- *
- * Synchronization:
- * 1. Waits on 'filled_slots' (blocks until data is available).
- * 2. Locks mutex to update 'head' index safely.
- * 3. Signals 'empty_slots' (increments available space).
- */
+// This function takes a client connection from the shared queue.
+// I'm the consumer in the producer-consumer pattern.
 int dequeue() {
+    // I wait for a filled slot. This will block if the queue is empty.
     sem_wait(&queue->filled_slots);
+    
+    // Now I can safely modify the queue.
     pthread_mutex_lock(&queue->mutex);
 
-    /* Check if we woke up due to shutdown signal */
+    // I check if I woke up because we're shutting down.
     if (queue->shutting_down && queue->head == queue->tail) {
         pthread_mutex_unlock(&queue->mutex);
-        return -1;
+        return -1; // Queue is empty and we're shutting down.
     }
 
+    // I take the connection from the head position.
     int client_socket = queue->connections[queue->head];
+    // I move the head forward, wrapping around if needed.
     queue->head = (queue->head + 1) % queue->max_size;
 
     pthread_mutex_unlock(&queue->mutex);
+    
+    // I signal that there's now an empty slot available.
     sem_post(&queue->empty_slots);
     
-    return client_socket;
+    return client_socket; // Here's the connection!
 }
-

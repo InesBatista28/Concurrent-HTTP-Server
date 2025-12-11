@@ -8,177 +8,139 @@
 #include <unistd.h>
 #include <pthread.h>
 
-/* Access global configuration for file paths */
+// I need to access the global server configuration to know where to write logs.
 extern server_config_t config;
 
-/*
- * In-Memory Log Buffer
- * Purpose: Aggregates multiple log entries in memory to minimize disk I/O.
- * Synchronization: Access is protected by the 'log_sem' semaphore.
- */
+// * In-Memory Log Buffer
+// I'm keeping logs in memory first to reduce disk writes.
+// This improves performance because writing to disk is slow.
 static char log_buffer[LOG_BUFFER_SIZE];
 static size_t buffer_offset = 0;
 
-/*
- * Shutdown Flag
- * Purpose: Signals the logger thread to stop running.
- * Synchronization: Accessed via atomic built-ins to prevent data races.
- */
+// * Shutdown Flag
+// I need a way to tell the logger thread when to stop.
+// I use volatile and atomic operations so the main thread can signal shutdown safely.
 static volatile int logger_shutting_down = 0;
 
-/*
- * Log Rotation Logic
- * Purpose: Checks if the current log file exceeds the maximum size limit.
- * If so, renames it to ".old" to archive it.
- * Note: Caller must hold the log_sem lock (since this modifies file state).
- */
+// I need to rotate log files when they get too big.
+// If a log file exceeds the maximum size, I rename it to ".old" and start fresh.
 void check_and_rotate_log()
 {
     struct stat st;
-    /* Check file status using the configured filename */
+    // I check if the log file exists and how big it is.
     if (stat(config.log_file, &st) == 0)
     {
         if (st.st_size >= MAX_LOG_FILE_SIZE)
         {
-            /* Create a sufficiently large buffer for the new filename */
+            // The file is too big! I'll rename it to archive it.
             char old_log_name[512]; 
             
             snprintf(old_log_name, sizeof(old_log_name), "%s.old", config.log_file);
             rename(config.log_file, old_log_name);
+            // Now the next write will create a new, empty log file.
         }
     }
 }
 
-/*
- * Internal Buffer Flush (Unsafe)
- * Purpose: Writes the current buffer content to disk and resets the offset.
- * Warning: This function is NOT thread-safe. The caller MUST hold the 
- * 'log_sem' lock before calling this function.
- */
+// This is the internal, unsafe version of buffer flushing.
+// I only call this from functions that already hold the semaphore lock.
 void flush_buffer_to_disk_internal()
 {
-    if (buffer_offset == 0) return; /* Nothing to write */
+    if (buffer_offset == 0) return; // If there's nothing to write, I just return.
 
-    check_and_rotate_log();
+    check_and_rotate_log(); // Check if I need to rotate logs first.
 
+    // I open the log file in append mode.
     FILE *fp = fopen(config.log_file, "a");
     if (fp)
     {
+        // I write everything from the buffer to the file.
         fwrite(log_buffer, 1, buffer_offset, fp);
         fclose(fp);
     }
 
-    /* Reset buffer pointer */
+    // Now that I've written everything, I reset the buffer.
     buffer_offset = 0;
 }
 
-/*
- * Public Buffer Flush (Thread-Safe)
- * Purpose: Forces a write of the log buffer to disk safely.
- * Synchronization: Acquires the semaphore before flushing.
- */
+// This is the public, thread-safe version of buffer flushing.
+// Any thread can call this safely because it uses the semaphore.
 void flush_logger(sem_t *log_sem)
 {
-    sem_wait(log_sem);
-    flush_buffer_to_disk_internal();
-    sem_post(log_sem);
+    sem_wait(log_sem); // I acquire the lock.
+    flush_buffer_to_disk_internal(); // Do the actual writing.
+    sem_post(log_sem); // I release the lock.
 }
 
-/*
- * Log a Request
- * Purpose: Formats an HTTP request log entry (Apache Common Log Format) and 
- * appends it to the in-memory buffer.
- *
- * Parameters:
- * - log_sem: Semaphore for synchronization.
- * - client_ip: IP address string of the client.
- * - method: HTTP method (GET, HEAD, etc.).
- * - path: The requested resource path.
- * - status: The HTTP response status code.
- * - bytes: The size of the response body sent.
- *
- * Synchronization:
- * - Uses localtime_r for thread-safe time formatting.
- * - Acquires log_sem for the critical section (buffer write).
- * - Automatically flushes if the buffer is full.
- */
+// This is the main logging function that other parts of the server call.
+// It formats log entries in Apache Common Log Format.
 void log_request(sem_t *log_sem, const char *client_ip, const char *method,
                  const char *path, int status, size_t bytes)
 {
-    /* 1. Generate Timestamp */
+    // 1. First, I generate a timestamp for this request.
     time_t now = time(NULL);
     struct tm tm_info;
-    localtime_r(&now, &tm_info); /* Thread-safe struct tm */
+    localtime_r(&now, &tm_info); // I use localtime_r because it's thread-safe.
     
     char timestamp[64];
     strftime(timestamp, sizeof(timestamp), "%d/%b/%Y:%H:%M:%S %z", &tm_info);
 
-    /* 2. Format Log Entry */
+    // 2. Now I format the log entry like Apache does.
     char entry[512];
     int len = snprintf(entry, sizeof(entry), "%s - - [%s] \"%s %s HTTP/1.1\" %d %zu\n",
                        client_ip, timestamp, method, path, status, bytes);
 
-    if (len < 0) return;
+    if (len < 0) return; // If snprintf failed, I give up.
 
-    /* 3. Critical Section: Append to Buffer */
-    sem_wait(log_sem);
+    // 3. This is the critical section - I need to add this entry to the buffer.
+    sem_wait(log_sem); // I acquire the lock.
 
-    /* Flush first if there isn't enough space */
+    // If the buffer is almost full, I flush it to disk first.
     if (buffer_offset + len >= LOG_BUFFER_SIZE)
     {
         flush_buffer_to_disk_internal();
     }
 
+    // Now I can safely add the new entry to the buffer.
     memcpy(log_buffer + buffer_offset, entry, len);
     buffer_offset += len;
 
-    sem_post(log_sem);
+    sem_post(log_sem); // I release the lock.
 }
 
-/*
- * Flush Wrapper (Compatibility)
- * Purpose: Wrapper for flush_logger to match expected interface.
- */
+// This is a compatibility wrapper - some parts of the code might call this.
 void flush_buffer_to_disk(sem_t *log_sem)
 {
     flush_logger(log_sem);
 }
 
-/*
- * Background Logger Thread
- * Purpose: Periodically flushes the log buffer to disk to ensure logs 
- * are persisted even if the buffer isn't full.
- *
- * Logic:
- * - Sleeps in 1-second intervals (looping 5 times) to allow for a 
- * responsive shutdown (max 1s delay on CTRL+C).
- * - Uses atomic load to check the shutdown flag safely.
- */
+// This is the background thread that periodically flushes the buffer.
+// Even if the buffer isn't full, I want to make sure logs get written to disk regularly.
 void *logger_flush_thread(void *arg)
 {
     sem_t *log_sem = (sem_t *)arg;
 
+    // I keep running until someone tells me to stop.
     while (!__atomic_load_n(&logger_shutting_down, __ATOMIC_SEQ_CST))
     {
-        /* Check shutdown status every second instead of blocking for 5s */
+        // Instead of sleeping for 5 seconds straight, I sleep in 1-second chunks.
+        // This way I can check the shutdown flag more often.
         for (int i = 0; i < 5; i++) {
              if (__atomic_load_n(&logger_shutting_down, __ATOMIC_SEQ_CST)) break;
              sleep(1);
         }
 
+        // Time to flush the buffer to disk.
         flush_logger(log_sem);
     }
 
-    /* Ensure any remaining logs are written before thread exit */
+    // Before I exit, I make sure to write any remaining logs.
     flush_logger(log_sem);
     return NULL;
 }
 
-/*
- * Request Logger Shutdown
- * Purpose: Signals the flush thread to terminate.
- * Synchronization: Uses atomic store to prevent data races with the reading thread.
- */
+// This function is called when the server is shutting down.
+// It tells the logger thread to stop running.
 void logger_request_shutdown()
 {
     __atomic_store_n(&logger_shutting_down, 1, __ATOMIC_SEQ_CST);

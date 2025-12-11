@@ -2,48 +2,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/*
- * Global Synchronization Primitives
- * These variables implement the classic Producer-Consumer synchronization pattern.
- *
- * - empty_slots: Semaphore counting the number of available spaces in the queue.
- * (Producer waits on this).
- * - filled_slots: Semaphore counting the number of items currently in the queue.
- * (Consumer waits on this).
- * - mutex: Mutual exclusion lock to protect the critical section (queue modification)
- * from concurrent access.
- */
-sem_t empty_slots;
-sem_t filled_slots;
-pthread_mutex_t mutex;
+// * Global Synchronization Primitives
+// These are the semaphores and mutex I use to coordinate between producers and consumers.
+// I'm implementing the classic Producer-Consumer pattern for my worker thread pool.
+sem_t empty_slots;      // I count how many empty slots are in the queue.
+sem_t filled_slots;     // I count how many filled slots are in the queue.
+pthread_mutex_t mutex;  // I protect the critical section where I modify the queue.
 
-/*
- * Initialize Semaphores
- * Purpose: Initializes the semaphores and mutex with the correct starting values
- * for a bounded buffer of size 'max_queue_size'.
- *
- * Parameters:
- * - max_queue_size: The capacity of the buffer/queue.
- *
- * Initialization Logic:
- * 1. empty_slots: Initialized to 'max_queue_size' because the buffer starts empty.
- * 2. filled_slots: Initialized to 0 because there are no items to consume yet.
- * 3. pshared=1: The second argument to sem_init is '1', indicating these semaphores
- * are intended to be shared between processes (requires the variables to be 
- * located in shared memory, though here they are global).
- *
- * Return:
- * - Void (Exits the program with status 1 on failure).
- */
+// I need to initialize all my synchronization primitives before using them.
+// This function sets them up with the right starting values for my queue size.
 void init_semaphores(int max_queue_size)
 {
-    /* Initialize empty_slots to the buffer capacity */
+    // I initialize empty_slots to the full queue size because initially, all slots are empty.
     if (sem_init(&empty_slots, 1, max_queue_size) != 0 ||
-        /* Initialize filled_slots to 0 */
+        // I initialize filled_slots to 0 because there's nothing in the queue yet.
         sem_init(&filled_slots, 1, 0) != 0 ||
-        /* Initialize the mutex with default attributes */
+        // I initialize the mutex with default attributes.
         pthread_mutex_init(&mutex, NULL) != 0)
     {
+        // If anything fails, I print an error and exit because I can't work without synchronization.
         perror("Semaphore or mutex init failed");
         exit(1);
     }

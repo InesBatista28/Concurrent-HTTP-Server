@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 199309L 
+#define _POSIX_C_SOURCE 199309L // I need this for clock_gettime and other POSIX features.
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -21,24 +21,18 @@
 #include "worker.h"
 #include "cache.h"
 
-/* Access global config and shared structures */
+// I need to access the global server configuration and shared queue.
 extern server_config_t config;
 extern connection_queue_t *queue;
 
-/*
- * Helper: Calculate Time Difference in Milliseconds
- * Purpose: Computes the elapsed time between two timespec structs.
- * Used for tracking request latency.
- */
+// This helper calculates the time difference between two timestamps in milliseconds.
+// I use this to measure how long it takes to handle each request.
 long get_time_diff_ms(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
 }
 
-/*
- * Helper: Get Client IP Address
- * Purpose: Extracts the client's IP address string from the socket file descriptor.
- * This is used specifically for the access logs.
- */
+// This function extracts the client's IP address from the socket.
+// I need this for logging purposes.
 void get_client_ip(int client_fd, char *ip_buffer, size_t buffer_len) {
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(addr);
@@ -49,16 +43,15 @@ void get_client_ip(int client_fd, char *ip_buffer, size_t buffer_len) {
     }
 }
 
-/*
- * Helper: Determine MIME Type
- * Purpose: Returns the correct Content-Type header based on the file extension.
- * Defaults to "application/octet-stream" for unknown types.
- */
+// I need to determine the MIME type based on file extension.
+// This helps browsers understand what kind of file I'm sending.
 const char *get_mime_type(const char *path)
 {
-    const char *ext = strrchr(path, '.');
+    const char *ext = strrchr(path, '.'); // I find the last dot in the path.
     if (!ext)
-        return "application/octet-stream";
+        return "application/octet-stream"; // Default for unknown types.
+    
+    // I compare extensions to known MIME types.
     if (strcmp(ext, ".html") == 0)
         return "text/html";
     if (strcmp(ext, ".css") == 0)
@@ -71,32 +64,13 @@ const char *get_mime_type(const char *path)
         return "image/jpeg";
     if (strcmp(ext, ".pdf") == 0)
         return "application/pdf";
-    return "application/octet-stream";
+    
+    return "application/octet-stream"; // Fallback for other types.
 }
 
-/*
- * Handle Client Request (Core Logic)
- * Purpose: Processes a single HTTP request from start to finish.
- *
- * Workflow:
- * 1. Updates "Active Connections" stat.
- * 2. Reads and parses the HTTP request.
- * 3. Validates method (GET/HEAD only) and security (no ".." paths).
- * 4. Resolves the physical file path (handling index.html).
- * 5. Checks the In-Memory Cache (for small files).
- * 6. If not cached, reads from disk and populates the cache.
- * 7. Sends the HTTP response.
- * 8. Updates final stats and logs the request.
- *
- * - Uses shared memory semaphores to atomic updates to global stats.
- * - Uses cache_get/cache_put which handle their own Read-Write locks.
- */
-
-/*
- * Helper: Send Error Page
- * Purpose: Serves a custom error page from www/errors/ if available.
- * Falls back to a hardcoded string if the file is missing.
- */
+// This helper function sends custom error pages.
+// If there's an error HTML file in www/errors/, I send that.
+// Otherwise, I send a simple hardcoded error message.
 static void send_error_page(int client_fd, int status_code, const char *status_text, long *bytes_sent)
 {
     char filepath[1024];
@@ -104,7 +78,7 @@ static void send_error_page(int client_fd, int status_code, const char *status_t
 
     struct stat st;
     if (stat(filepath, &st) == 0) {
-        /* Serve custom error page */
+        // I found a custom error page!
         FILE *fp = fopen(filepath, "rb");
         if (fp) {
             char *buf = malloc(st.st_size);
@@ -123,7 +97,7 @@ static void send_error_page(int client_fd, int status_code, const char *status_t
         }
     }
 
-    /* Fallback: Hardcoded error message */
+    // Fallback: I send a simple HTML error message.
     char body[512];
     snprintf(body, sizeof(body), "<h1>%d %s</h1>", status_code, status_text);
     size_t len = strlen(body);
@@ -131,11 +105,14 @@ static void send_error_page(int client_fd, int status_code, const char *status_t
     *bytes_sent = len;
 }
 
+// This is the main function that handles each client connection.
+// It processes HTTP requests from start to finish.
 void handle_client(int client_socket)
 {
     struct timespec start_time, end_time;
     
-    /* 1. Increment Active Connections (Critical Section) */
+    // 1. I increment the active connections counter.
+    // This needs to be thread-safe, so I use a semaphore.
     sem_wait(&stats->mutex);
     stats->active_connections++;
     sem_post(&stats->mutex);
@@ -143,16 +120,17 @@ void handle_client(int client_socket)
     char client_ip[INET_ADDRSTRLEN];
     get_client_ip(client_socket, client_ip, sizeof(client_ip));
 
-    /* Set Socket Timeout for Keep-Alive */
+    // I set a timeout on the socket for keep-alive connections.
     struct timeval tv;
     tv.tv_sec = config.keep_alive_timeout > 0 ? config.keep_alive_timeout : 5;
     tv.tv_usec = 0;
     setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
+    // I can handle multiple requests on the same connection (keep-alive).
     while (1) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
 
-        /* Read Request */
+        // I read the request from the client.
         char buffer[2048];
         ssize_t bytes = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
 
@@ -162,7 +140,7 @@ void handle_client(int client_socket)
 
         if (bytes <= 0)
         {
-            /* Connection closed or timeout */
+            // Connection closed or timeout - I break out of the loop.
             break; 
         }
         buffer[bytes] = '\0';
@@ -171,12 +149,11 @@ void handle_client(int client_socket)
     {
         status_code = 400;
         send_error_page(client_socket, 400, "Bad Request", &bytes_sent);
-        /* Don't close immediately, just break loop to cleanup */
         status_code = 400;
         goto update_stats_and_log; 
     }
 
-    /* Validate Method (Only GET and HEAD supported) */
+    // I only support GET and HEAD methods.
     int is_head = (strcmp(req.method, "HEAD") == 0);
     if (strcmp(req.method, "GET") != 0 && strcmp(req.method, "HEAD") != 0)
     {
@@ -186,7 +163,7 @@ void handle_client(int client_socket)
         goto update_stats_and_log;
     }
 
-    /* Security: Prevent Directory Traversal */
+    // Security check: I prevent directory traversal attacks.
     if (strstr(req.path, ".."))
     {
         status_code = 403;
@@ -195,7 +172,7 @@ void handle_client(int client_socket)
         goto update_stats_and_log;
     }
 
-    /* Dashboard Stats Endpoint */
+    // Special endpoint: /stats returns server statistics as JSON.
     if (strcmp(req.path, "/stats") == 0)
     {
         sem_wait(&stats->mutex);
@@ -227,12 +204,12 @@ void handle_client(int client_socket)
         goto update_stats_and_log;
     }
 
-    /* Range Request Support */
+    // I check for HTTP Range requests (for partial file downloads).
     long range_start = -1;
     long range_end = -1;
     char *range_header = strstr(buffer, "Range: bytes=");
     if (range_header) {
-        range_header += 13; /* Skip "Range: bytes=" */
+        range_header += 13; // Skip "Range: bytes="
         char *dash = strchr(range_header, '-');
         if (dash) {
             *dash = '\0';
@@ -240,19 +217,19 @@ void handle_client(int client_socket)
             if (*(dash + 1) != '\r' && *(dash + 1) != '\n') {
                 range_end = atol(dash + 1);
             }
-            *dash = '-'; /* Restore buffer */
+            *dash = '-'; // Restore the buffer
         }
     }
 
-    /* Resolve Path with Virtual Host Support */
+    // I handle virtual hosts: check if there's a directory matching the Host header.
     char full_path[2048];
     char vhost_path[1024];
     int vhost_found = 0;
 
-    /* Parse Host Header */
+    // Parse the Host header from the request.
     char *host_header = strstr(buffer, "Host: ");
     if (host_header) {
-        host_header += 6; /* Skip "Host: " */
+        host_header += 6; // Skip "Host: "
         char *end = strchr(host_header, '\r');
         if (!end) end = strchr(host_header, '\n');
         if (end) {
@@ -262,11 +239,11 @@ void handle_client(int client_socket)
             strncpy(host, host_header, len);
             host[len] = '\0';
             
-            /* Remove port if present (e.g. localhost:8080 -> localhost) */
+            // Remove port if present
             char *colon = strchr(host, ':');
             if (colon) *colon = '\0';
 
-            /* Check if directory exists: www/host */
+            // Check if directory exists: www/host
             snprintf(vhost_path, sizeof(vhost_path), "%s/%s", config.document_root, host);
             struct stat st_vhost;
             if (stat(vhost_path, &st_vhost) == 0 && S_ISDIR(st_vhost.st_mode)) {
@@ -280,14 +257,14 @@ void handle_client(int client_socket)
         snprintf(full_path, sizeof(full_path), "%s%s", config.document_root, req.path);
     }
 
-    /* Directory Handling (Serve index.html) */
+    // If the path is a directory, I serve index.html.
     struct stat st;
     if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode))
     {
         strncat(full_path, "/index.html", sizeof(full_path) - strlen(full_path) - 1);
     }
 
-    /* File Existence Check */
+    // Check if the file exists.
     if (stat(full_path, &st) != 0) {
         status_code = 404;
         send_error_page(client_socket, 404, "Not Found", &bytes_sent);
@@ -298,15 +275,14 @@ void handle_client(int client_socket)
     char *content = NULL;
     size_t read_bytes = 0;
 
-    /* * CACHING LOGIC
-     * Only cache files smaller than 1MB to preserve memory.
-     */
+    // * CACHING LOGIC
+    // I only cache files smaller than 1MB to save memory.
     if (fsize > 0 && fsize < (1 * 1024 * 1024)) {
-        /* Try to retrieve from cache first */
+        // First, I try to get the file from cache.
         if (cache_get(full_path, &content, &read_bytes) == 0) {
-            /* HIT: 'content' is now a malloc'd copy from the cache */
+            // Cache HIT! 'content' now has a copy of the cached data.
         } else {
-            /* MISS: Read from disk */
+            // Cache MISS: I need to read from disk.
             FILE *fp = fopen(full_path, "rb");
             if (!fp) {
                 status_code = 404;
@@ -332,11 +308,11 @@ void handle_client(int client_socket)
             read_bytes = rb;
             content = buf;
 
-            /* Update Cache (Best Effort) */
+            // I update the cache for next time (best effort).
             cache_put(full_path, content, read_bytes);
         }
     } else {
-        /* Large files: Direct Disk Read (No Caching) */
+        // Large files: I read directly from disk without caching.
         FILE *fp = fopen(full_path, "rb");
         if (!fp) {
             status_code = 404;
@@ -363,21 +339,22 @@ void handle_client(int client_socket)
         read_bytes = rb;
     }
 
-    /* Send Response */
+    // Determine the MIME type for the response header.
     const char *mime = get_mime_type(full_path);
     
+    // Handle Range requests (partial content).
     if (range_start != -1) {
-        /* Partial Content */
+        // Partial Content response (206)
         if (range_end == -1 || range_end >= fsize) range_end = fsize - 1;
         long content_length = range_end - range_start + 1;
         
         status_code = 206;
         
-        /* Construct Content-Range header */
+        // Construct Content-Range header
         char extra_headers[128];
         snprintf(extra_headers, sizeof(extra_headers), "Content-Range: bytes %ld-%ld/%ld\r\n", range_start, range_end, fsize);
         
-        /* Send Header */
+        // Send the header
         char header[1024];
         snprintf(header, sizeof(header), 
             "HTTP/1.1 206 Partial Content\r\n"
@@ -388,19 +365,14 @@ void handle_client(int client_socket)
             "\r\n", mime, content_length, extra_headers);
         send(client_socket, header, strlen(header), 0);
         
-        /* Send Body */
+        // Send the body (or just header for HEAD requests)
         if (!is_head) {
             if (content) {
-                /* From Cache or Full Read */
+                // From cache or full read
                 send(client_socket, content + range_start, content_length, 0);
             } else {
-                /* Direct Disk Read for Range */
-                /* Note: If we didn't read full file above, we need to re-open or seek. 
-                   For simplicity in this architecture, we assumed full read for small files.
-                   For large files (else block), we need to handle it. 
-                */
-                 /* Re-open for seek if content is NULL (Large file path) */
-                 FILE *fp = fopen(full_path, "rb");
+                // For large files, I need to read just the requested range
+                FILE *fp = fopen(full_path, "rb");
                  if (fp) {
                      fseek(fp, range_start, SEEK_SET);
                      char *chunk = malloc(content_length);
@@ -418,14 +390,14 @@ void handle_client(int client_socket)
         bytes_sent = content_length;
     }
     else {
-        /* Normal 200 OK */
+        // Normal 200 OK response
         status_code = 200;
-        if (is_head)
+        if (is_head) // HEAD request: send headers only
         {
             send_http_response(client_socket, 200, "OK", mime, NULL, fsize);
             bytes_sent = 0;
         }
-        else
+        else // GET request: send headers and body
         {
             send_http_response(client_socket, 200, "OK", mime, content, fsize);
             bytes_sent = fsize;
@@ -433,18 +405,14 @@ void handle_client(int client_socket)
     }
 
     free(content);
-    /* close(client_socket); REMOVED for Keep-Alive */
 
-/* * Cleanup Label: Updates stats and logs the request. 
- * Reached via goto from error handlers or normal completion.
- */
+// * Cleanup Label: I use goto to handle errors and normal completion in one place.
 update_stats_and_log:
     clock_gettime(CLOCK_MONOTONIC, &end_time);
     long elapsed_ms = get_time_diff_ms(start_time, end_time);
 
-    /* Update Shared Stats (Critical Section) */
+    // Update shared statistics (thread-safe)
     sem_wait(&stats->mutex);
-    /* stats->active_connections--; MOVED to end of connection */
     stats->total_requests++;
     stats->bytes_transferred += bytes_sent;
     stats->average_response_time += elapsed_ms;
@@ -455,45 +423,32 @@ update_stats_and_log:
     
     sem_post(&stats->mutex);
 
-    /* Log Request (Apache Format) */
+    // Log the request in Apache format
     const char *log_method = (req.method[0] != '\0') ? req.method : "-";
     const char *log_path = (req.path[0] != '\0') ? req.path : "-";
     
     log_request(&queue->log_mutex, client_ip, log_method, log_path, status_code, bytes_sent);
 
-    /* Check for Connection: close header to break loop */
-    /* Simple check: if request contained "Connection: close" (not implemented in parser yet, assuming keep-alive by default) */
-    /* For now, we rely on timeout or client closing. */
-    } /* End of while(1) */
+    } // End of while(1) keep-alive loop
 
+    // Connection is closing, so I clean up.
     close(client_socket);
     sem_wait(&stats->mutex);
-    stats->active_connections--;
+    stats->active_connections--; // Decrement active connections
     sem_post(&stats->mutex);
 }
 
-/*
- * Receive a File Descriptor via UNIX Domain Socket
- * Purpose: Receives a file descriptor sent by another process. The kernel
- * will automatically add the FD to this process's file table and return
- * its new integer value via the ancillary data.
- *
- * Parameters:
- * - socket: The UNIX domain socket to receive from.
- *
- * Return:
- * - The new valid file descriptor on success.
- * - -1 on failure (recvmsg error or no FD received).
- */
+// This function receives a file descriptor from another process via UNIX socket.
+// It's the counterpart to send_fd() in master.c.
 static int recv_fd(int socket)
 {
     struct msghdr msg = {0};
 
-    /* Prepare buffer for the dummy byte */
+    // I need to receive at least one byte of data.
     char buf[1] = {0};
     struct iovec io = {.iov_base = buf, .iov_len = 1};
 
-    /* Union for alignment of receiving buffer */
+    // I use a union for proper alignment of the control buffer.
     union
     {
         char buf[CMSG_SPACE(sizeof(int))];
@@ -507,76 +462,53 @@ static int recv_fd(int socket)
     msg.msg_control = u.buf;
     msg.msg_controllen = sizeof(u.buf);
 
-    /* Perform the receive operation */
+    // Perform the receive operation
     if (recvmsg(socket, &msg, 0) < 0)
         return -1;
 
-    /* Extract the FD from the ancillary data */
+    // Extract the file descriptor from the control message
     struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
     
-    /* Verify we received the expected type of message (SCM_RIGHTS) */
+    // Verify it's the right type of message
     if (cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS)
     {
-        /* Return the file descriptor integer */
-        return *((int *)CMSG_DATA(cmsg));
+        return *((int *)CMSG_DATA(cmsg)); // Here's the file descriptor!
     }
     
-    return -1; /* Failed to receive a valid FD */
+    return -1; // Failed to receive a valid FD
 }
 
-/*
- * Start Worker Process
- * Purpose: This is the main entry point for a Worker process. It initializes 
- * process-local resources (cache, thread pool, logger thread) and enters 
- * a loop to receive client connections from the Master process.
- *
- * Parameters:
- * - ipc_socket: The UNIX domain socket used to receive File Descriptors 
- * from the Master process.
- */
+// This is the main entry point for a worker process.
+// The master process calls fork() and then the child executes this function.
 void start_worker_process(int ipc_socket)
 {
     printf("Worker (PID: %d) started\n", getpid());
 
-    /* Initialize time zone information for logging */
+    // Initialize time zone for proper logging timestamps
     tzset();
     
-    /* * Initialize shared queue structures. 
-     * Note: In this architecture, this primarily sets up the shared log_mutex 
-     * needed for thread-safe logging across processes.
-     */
+    // Initialize shared queue structures
     init_shared_queue(config.max_queue_size);
 
-    /* * Start the Logger Flush Thread
-     * This background thread ensures logs are written to disk periodically 
-     * even if the buffer isn't full.
-     */
+    // Start the logger flush thread
     pthread_t flush_tid;
     if (pthread_create(&flush_tid, NULL, logger_flush_thread, (void *)&queue->log_mutex) != 0) {
         perror("Failed to create logger flush thread");
     }
 
-    /* * Initialize Local Request Queue
-     * This queue acts as the buffer between the Worker process (Main Thread) 
-     * and its pool of worker threads.
-     */
+    // Initialize the local queue for this worker's thread pool
     local_queue_t local_q;
     if (local_queue_init(&local_q, config.max_queue_size) != 0) {
         perror("local_queue_init");
     }
     
-    /* * Initialize File Cache
-     * Sets up the in-memory LRU cache with the size defined in server.conf.
-     */
+    // Initialize the file cache
     size_t cache_bytes = (size_t)config.cache_size_mb * 1024 * 1024;
     if (cache_init(cache_bytes) != 0) {
         perror("cache_init");
     }
 
-    /* * Create Thread Pool
-     * Spawns a fixed number of threads (consumer) that will block waiting 
-     * for work on the local_q.
-     */
+    // Create the thread pool
     int thread_count = config.threads_per_worker > 0 ? config.threads_per_worker : 0;
     pthread_t *threads = NULL;
     if (thread_count > 0) {
@@ -596,22 +528,16 @@ void start_worker_process(int ipc_socket)
         created++;
     }
 
-    /* * Main Loop: Receive and Dispatch
-     * 1. Block waiting for a File Descriptor from Master (IPC).
-     * 2. Enqueue the FD into the local thread pool queue.
-     */
+    // * Main Loop: Receive and dispatch connections from master
     while (1)
     {
         int client_fd = recv_fd(ipc_socket);
         if (client_fd < 0) {
-            /* IPC socket closed or error — begin shutdown sequence */
+            // IPC socket closed or error - time to shut down
             break;
         }
 
-        /* * Dispatch to Thread Pool
-         * Try to add the client FD to the local queue. If the queue is full,
-         * we reject the request immediately with 503 to prevent overload.
-         */
+        // Try to add the client to the local queue
         if (local_queue_enqueue(&local_q, client_fd) != 0) {
             fprintf(stderr, "[Worker %d] Queue full! Rejecting client.\n", getpid());
             
@@ -622,26 +548,24 @@ void start_worker_process(int ipc_socket)
         }
     }
 
-    /* * === Graceful Shutdown Sequence === 
-     */
-
-    /* 1. Signal Worker Threads to Stop */
-    /* Acquire lock to ensure condition broadcast is not missed by threads */
+    // * === Graceful Shutdown Sequence === 
+    
+    // 1. Signal worker threads to stop
     pthread_mutex_lock(&local_q.mutex); 
     local_q.shutting_down = 1;
     pthread_cond_broadcast(&local_q.cond);
     pthread_mutex_unlock(&local_q.mutex);
 
-    /* 2. Stop Logger Thread */
+    // 2. Stop logger thread
     logger_request_shutdown();
     pthread_join(flush_tid, NULL);
 
-    /* 3. Join Worker Threads */
+    // 3. Join worker threads
     for (int i = 0; i < created; i++) {
         pthread_join(threads[i], NULL);
     }
 
-    /* 4. Cleanup Resources */
+    // 4. Cleanup resources
     if (threads) free(threads);
     local_queue_destroy(&local_q);
     cache_destroy();

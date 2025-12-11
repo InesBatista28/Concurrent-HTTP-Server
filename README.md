@@ -1,8 +1,8 @@
 # Concurrent HTTP Server
 
 **Authors:**
-*   Inês Batista, 124877
-*   Maria Quinteiro, 124996
+Inês Batista, 124877
+Maria Quinteiro, 124996
 
 ## Introduction
 The **Concurrent HTTP Server** is a high-performance, multi-process, and multi-threaded web server developed for the Operating Systems course. It is designed to handle thousands of concurrent connections efficiently by leveraging advanced systems programming concepts.
