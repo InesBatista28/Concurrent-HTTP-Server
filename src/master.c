@@ -73,7 +73,7 @@ static int send_fd(int socket, int fd_to_send)
     // Finally, I put the file descriptor into the data part of the message.
     *((int *)CMSG_DATA(cmsg)) = fd_to_send;
 
-    return sendmsg(socket, &msg, 0);
+    return sendmsg(socket, &msg, MSG_NOSIGNAL);
 }
 
 // This is the main event! I'm starting the master server.

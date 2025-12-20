@@ -21,4 +21,4 @@ int parse_http_request(const char *buffer, http_request_t *req);
 void send_http_response(int fd, int status, const char *status_msg, 
                         const char *content_type, const char *body, size_t body_len);
 
-#endif // HTTP_H
+#endif 

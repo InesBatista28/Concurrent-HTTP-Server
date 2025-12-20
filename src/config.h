@@ -32,4 +32,4 @@ void parse_env_vars(server_config_t *config);
 // This gives users the most direct way to override settings.
 void parse_arguments(int argc, char *argv[], server_config_t *config);
 
-#endif // CONFIG_H
+#endif 

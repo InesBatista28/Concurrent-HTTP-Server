@@ -62,19 +62,19 @@ void send_http_response(int fd, int status, const char *status_msg, const char *
                               "Content-Type: %s\r\n"       // What kind of data I'm sending
                               "Content-Length: %zu\r\n"    // How many bytes are in the body
                               "Server: ConcurrentHTTP/1.0\r\n" // My server name
-                              "Connection: close\r\n"      // I'll close the connection after this
+                              "Connection: keep-alive\r\n" // I'll keep the connection open for more requests
                               "\r\n",                      // Empty line marks end of headers
                               status, status_msg, 
                               date_str,                     
                               content_type, body_len);
 
     // 3. Send the header to the client.
-    send(fd, header, header_len, 0);
+    send(fd, header, header_len, MSG_NOSIGNAL);
 
     // 4. If there's a body (and it's not a HEAD request), send it too.
     // The body_len check ensures I don't try to send empty data.
     if (body && body_len > 0)
     {
-        send(fd, body, body_len, 0);
+        send(fd, body, body_len, MSG_NOSIGNAL);
     }
 }

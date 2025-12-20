@@ -363,13 +363,13 @@ void handle_client(int client_socket)
             "%s"
             "Connection: keep-alive\r\n"
             "\r\n", mime, content_length, extra_headers);
-        send(client_socket, header, strlen(header), 0);
+        send(client_socket, header, strlen(header), MSG_NOSIGNAL);
         
         // Send the body (or just header for HEAD requests)
         if (!is_head) {
             if (content) {
                 // From cache or full read
-                send(client_socket, content + range_start, content_length, 0);
+                send(client_socket, content + range_start, content_length, MSG_NOSIGNAL);
             } else {
                 // For large files, I need to read just the requested range
                 FILE *fp = fopen(full_path, "rb");
@@ -379,7 +379,7 @@ void handle_client(int client_socket)
                      if (chunk) {
                          size_t rb = fread(chunk, 1, content_length, fp);
                          if (rb > 0) {
-                            send(client_socket, chunk, rb, 0);
+                            send(client_socket, chunk, rb, MSG_NOSIGNAL);
                          }
                          free(chunk);
                      }

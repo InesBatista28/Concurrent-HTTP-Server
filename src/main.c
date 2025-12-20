@@ -8,6 +8,7 @@
 #include <fcntl.h> // I use this for file control options (open).
 #include "master.h" // I need to know about the master process functions.
 #include "config.h" // I need to know how to handle configuration.
+#include <signal.h> // I need this for signal handling (SIGPIPE).
 #include "shared_mem.h" // I need to set up shared memory for statistics.
 
 // I'm declaring the configuration structure globally so I can access it from anywhere.
@@ -171,6 +172,9 @@ int main(int argc, char *argv[]) {
     if (daemon_mode) {
         daemonize();
     }
+
+    // Ignore SIGPIPE to prevent crash on client disconnect
+    signal(SIGPIPE, SIG_IGN);
 
     // I'm initializing the shared memory for statistics.
     init_shared_stats();
